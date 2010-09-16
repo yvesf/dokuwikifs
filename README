@@ -1,0 +1,6 @@
+DokuWiki FUSE Driver (python)
+
+using (slightly enhanced) dokuwikixmlrpc.py 
+from http://github.com/chimeric/dokuwikixmlrpc
+
+do not use it in production environments
