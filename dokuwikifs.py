@@ -302,12 +302,17 @@ Try -d to see whats going on
         try:
             if offset == 0:
                 self.dokuwiki.put_page(entry.properties['id'], buf, "write() by uid=TODO", minor=False)
+                if len(buf) == 0: #writing a empty dw-page is like removing it
+                    self._pagetree(cache=False)
             else:
-                raise Exception("offset not supported")
-            if len(buf) == 0: #writing a empty dw-page is like removing it
-                self._pagetree(cache=False)
+                #writing with offset, fetch current page
+                old_buf = self.read(path, offset, 0) #use offset as length parameter
+                self.dokuwiki.put_page(entry.properties['id'],
+                                       old_buf + buf,
+                                       "subsequent write(offset={0}) by uid=TODO".format(offset),
+                                       minor=False)
         except (DokuWikiXMLRPCError,Exception),e:
-            self.log.error(str(e))
+            self.log.error("write({0}, offset={1}): {2}".format(path, offset, str(e)))
             # remove pagelock if write failed
             if len(buf) > 0:
                 try:
