@@ -31,8 +31,7 @@ def checkpath(path):
     dirname = os.path.dirname(path)
     logging.getLogger("checkpath").debug("filename={0} dirname={1} path={2}".format(filename,dirname, path))
     allowedChars = map(lambda char: chr(char), range(ord("a"),ord("z")+1))
-    allowedChars.append(".")
-    allowedChars.append("/")
+    allowedChars.extend([".","/","_"])
     allowedChars.extend(map(lambda char: chr(char), range(ord("0"), ord("9")+1)))
     pathCharOk = True
     for pathChar in path:
@@ -197,6 +196,8 @@ Try -d to see whats going on
             for name in entry.keys():
                 if checkpath(name):
                     yield fuse.Direntry( name )
+                else:
+                    self.log.debug("readdir: skip {0}".format(name))
         else:
             self.log.error("readdir({0},{1}): not a directory".format(path,offset))
 
