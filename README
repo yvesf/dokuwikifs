@@ -3,4 +3,14 @@ DokuWiki FUSE Driver (python)
 using (slightly enhanced) dokuwikixmlrpc.py 
 from http://github.com/chimeric/dokuwikixmlrpc
 
-do not use it in production environments
+use it with care in production environments
+
+rejects to write filenames with dokuwiki-unclean id's,
+eg:
+  - .test.swp
+  - öägaga
+  - everything except:
+    * ^[a-z0-9]{1}[a-z0-9\.]*$
+
+its really slow!
+
