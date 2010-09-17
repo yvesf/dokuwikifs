@@ -195,7 +195,8 @@ Try -d to see whats going on
         entry = self._findPageTreeEntry(path)
         if entry and entry.__class__ == dict:
             for name in entry.keys():
-                yield fuse.Direntry( name )
+                if checkpath(name):
+                    yield fuse.Direntry( name )
         else:
             self.log.error("readdir({0},{1}): not a directory".format(path,offset))
 
