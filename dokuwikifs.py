@@ -21,7 +21,6 @@ if not hasattr(fuse, '__version__'):
         "your fuse-py doesn't know of fuse.__version__, probably it's too old."
  
 fuse.fuse_python_api = (0, 2)
-
 def checkpath(path):
     """
     returns true if path is a clean dokuwiki id
@@ -43,9 +42,9 @@ def checkpath(path):
         and pathCharOk
 
 class DokuPage(fuse.Stat):
-    def __init__(self,path,properties):
+    def __init__(self,path,*foo):
         self.path = path
-        self.properties = properties
+        self.id = path.replace("/", ":")
         
         self.st_mode = stat.S_IFREG | 0666
         self.st_ino = 0
@@ -54,13 +53,13 @@ class DokuPage(fuse.Stat):
         self.st_uid = 0
         self.st_gid = 0
 
-        self.st_size = properties['size']
-        self.st_atime = properties['mtime']
-        self.st_mtime = properties['mtime']
-        self.st_ctime = properties['mtime']
+        self.st_size = 0
+        self.st_atime = 0
+        self.st_mtime = 0
+        self.st_ctime = 0
 
     def __repr__(self):
-        return "DokuPage path={0} properties={1}".format(self.path, self.properties)
+        return "DokuPage path={0} id={1}".format(self.path, self.id)
 
 class DokuFS(fuse.Fuse):
     usage = """Doku Wiki Fuse driver
@@ -81,12 +80,12 @@ Try -d to see whats going on
                               help="Wiki Password")
 
         self.log = logging.getLogger("DokuFS")
-        self.pagelistCache = None
-        self.pagelistCacheTime = 0
-        self.pagelistCacheTimeout = 5
+        self.pagetreeCache = dict()
+        self.pagetreeCacheTime = 0
+        self.pagetreeCacheTimeout = 5
 
-    def init2(self):
-        self.log.info("init2")
+    def connect(self):
+        self.log.info("connect")
         try:
             self.dokuwiki = DokuWikiClient(self.url,
                                            self.username,
@@ -98,41 +97,46 @@ Try -d to see whats going on
             raise RuntimeError(e)
 
     def _pagelist(self,cache=True): #rethrows DokuWikiXMLRPCError
-        if not self.pagelistCache \
-                or self.pagelistCacheTime + self.pagelistCacheTimeout < time.time() \
-                or not cache:
-            self.pagelistCacheTime = time.time()
-            self.pagelistCache = self.dokuwiki.pagelist("")
-
-        return self.pagelistCache
+        return self.dokuwiki.pagelist("")
 
     def _pagetree(self,cache=True):
-        root = {}
-        try:
-            for page in self._pagelist(cache=cache):
-                path = page['id'].split(":")
-                myRoot = root
-                for pathElem in path:
-                    if path[-1] == pathElem: #last path element -> filename
-                        myRoot[pathElem] = DokuPage("/"+("/".join(path)), page)
-                    else:
-                        if not myRoot.has_key(pathElem):
-                            myRoot[pathElem] = dict()
-                        myRoot = myRoot[pathElem]
-        except DokuWikiXMLRPCError,e:
-            self.log.error(str(e))
-        finally:
-            return root
+        if self.pagetreeCacheTime + self.pagetreeCacheTimeout < time.time() \
+                or not cache:
+            try:
+                for page in self._pagelist(cache=cache):
+                    path = page['id'].split(":")
+                    myRoot = self.pagetreeCache
+                    for pathElem in path:
+                        if path[-1] == pathElem: #last path element -> filename
+                            myRoot[pathElem] = DokuPage("/"+("/".join(path)))
+                            myRoot[pathElem].id = page['id']
+                            myRoot[pathElem].st_size = page['size']
+                            myRoot[pathElem].st_atime = page['mtime']
+                            myRoot[pathElem].st_mtime = page['mtime']
+                            myRoot[pathElem].st_ctime = page['mtime']
+                        else:
+                            if not myRoot.has_key(pathElem):
+                                myRoot[pathElem] = dict()
+                            myRoot = myRoot[pathElem]
+            except DokuWikiXMLRPCError,e:
+                self.log.error(str(e))
+                return dict()
+            finally:
+                self.pagetreeCacheTime = time.time()
+
+        return self.pagetreeCache
+
 
     def _findPageTreeEntry(self, pathIn, cache=True):
         if not checkpath(pathIn):
             self.log.error("_findPageTreeEntry: Invalid path {0}".format(pathIn))
             return None
 
-        path = pathIn[1:].split("/")
+        path = pathIn[1:].split("/") #remove preceding and split by "/"
         root = self._pagetree(cache=cache)
         for pathElem in path:
             if pathElem == '':
+                #happens in root directory, pathIn == "/"
                 continue
             if root.has_key(pathElem):
                 root = root[pathElem]
@@ -163,7 +167,7 @@ Try -d to see whats going on
         if not entry:
             self.log.error( "getattr({0}): not found".format(path) )
             return -errno.ENOENT
-        elif entry.__class__ == dict:
+        elif isinstance(entry, dict):
             self.log.info( "getattr({0}): dir with {1} entries".format(path, len(entry)) )
             t = fuse.Stat()
             t.st_mode = stat.S_IFDIR | 0777
@@ -171,7 +175,7 @@ Try -d to see whats going on
             t.st_nlink = 2
             t.st_size = 0
             return t
-        elif entry.__class__ == DokuPage:
+        elif isinstance(entry, DokuPage):
             self.log.info( "getattr({0}): {1}".format(path, entry) )
             return entry
 
@@ -181,7 +185,7 @@ Try -d to see whats going on
         if not entry:
             self.log.info( "open({0}, {1}): file not found".format(path,flags) )
             return -errno.ENOSYS
-        elif entry.__class__ == dict:
+        elif isinstance(entry, dict):
             self.log.info( "open({0}, {1}): -EISDIR is a directory".format(path,flags) )
             return -errno.EISDIR
         else:
@@ -192,7 +196,7 @@ Try -d to see whats going on
         yield fuse.Direntry(".")
         yield fuse.Direntry("..")
         entry = self._findPageTreeEntry(path)
-        if entry and entry.__class__ == dict:
+        if entry and isinstance(entry, dict):
             for name in entry.keys():
                 if checkpath(name):
                     yield fuse.Direntry( name )
@@ -216,18 +220,27 @@ Try -d to see whats going on
             self.write(path, "%truncated%", 0)
         else:
             entry = self._findPageTreeEntry(path)
-            if not entry or entry.__class__ != DokuPage:
+            if not entry or isinstance(entry, DokuPage):
                 return -errno.ENOENT
 
-            buf = self.dokuwiki.page(entry.properties["id"])[:length]
+            buf = self.dokuwiki.page(entry.id)[:length]
             if self.write(path, buf, 0) != len(buf):
                 return -errno.EIO
             else:
                 return 0
 
     def rmdir(self, path):
-        self.log.info( "EOPNOTSUPP rmdir({0})".format(path) )
-        return -errno.EOPNOTSUPP
+        self.log.info( "rmdir({0})".format(path) )
+        entry = self._findPageTreeEntry(path)
+        if not entry:
+            return -errno.ENOENT
+        if not isinstance(entry, dict):
+            return -errno.EIO
+
+        if len(entry) == 0:
+            return 0
+        else:
+            return -errno.ENOTEMPTY
 
     def link(self, path):
         self.log.info( "EOPNOTSUPP link({0})".format(path) )
@@ -240,7 +253,7 @@ Try -d to see whats going on
     def unlink(self, path):
         self.log.info( "unlink({0})".format(path) )
         entry = self._findPageTreeEntry(path)
-        if entry.__class__ == DokuPage:
+        if isinstance(entry, DokuPage):
            return self.write(path, "", 0)
         else:
             self.log.info("EOPNOTSUPP unlink for {0}".format(entry))
@@ -249,10 +262,10 @@ Try -d to see whats going on
     def read(self, path, length, offset):
         self.log.info( "read({0},{1},{2})".format(path, length, offset) )
         entry = self._findPageTreeEntry(path)
-        if not entry or entry.__class__ != DokuPage:
+        if not entry or isinstance(entry, DokuPage):
             return -errno.ENOENT
 
-        buf = self.dokuwiki.page(entry.properties["id"])
+        buf = self.dokuwiki.page(entry.id)
         result = buf[offset:length+offset]
         return result.encode("utf-8")
 
@@ -286,14 +299,14 @@ Try -d to see whats going on
     def write(self, path, buf, offset):
         self.log.info( "write({0}, len(buf)={1}, {2})".format(path, len(buf), offset) )
         entry = self._findPageTreeEntry(path)
-        if not entry or entry.__class__ != DokuPage:
+        if not entry or isinstance(entry, DokuPage):
             return -errno.ENOENT
 
         # Lock page to prevent race-conditions
         try:
-            lockResult = self.dokuwiki.set_locks({'lock': [ entry.properties['id'] ], 'unlock':list()})
-            if not entry.properties['id'] in lockResult['locked']:
-                self.log.error( "Failed to lock page {0}. lockResult was {1}".format(entry.properties['id'], lockResult) )
+            lockResult = self.dokuwiki.set_locks({'lock': [ entry.id ], 'unlock':list()})
+            if not entry.id in lockResult['locked']:
+                self.log.error( "Failed to lock page {0}. lockResult was {1}".format(entry.id, lockResult) )
                 return -errno.EIO
         except DokuWikiXMLRPCError,e:
             self.log.error(str(e))
@@ -301,13 +314,13 @@ Try -d to see whats going on
 
         try:
             if offset == 0:
-                self.dokuwiki.put_page(entry.properties['id'], buf, "write() by uid=TODO", minor=False)
+                self.dokuwiki.put_page(entry.id, buf, "write() by uid=TODO", minor=False)
                 if len(buf) == 0: #writing a empty dw-page is like removing it
                     self._pagetree(cache=False)
             else:
                 #writing with offset, fetch current page
                 old_buf = self.read(path, offset, 0) #use offset as length parameter
-                self.dokuwiki.put_page(entry.properties['id'],
+                self.dokuwiki.put_page(entry.id,
                                        old_buf + buf,
                                        "subsequent write(offset={0}) by uid=TODO".format(offset),
                                        minor=False)
@@ -316,9 +329,9 @@ Try -d to see whats going on
             # remove pagelock if write failed
             if len(buf) > 0:
                 try:
-                    lockResult = self.dokuwiki.set_locks({'lock':list(), 'unlock': [ entry.properties['id'] ]})
-                    if not entry.properties['id'] in lockResult['unlocked']:
-                        self.log.error( "Failed to UN-lock page {0}. lockResult was {1}".format(entry.properties['id'], lockResult) )
+                    lockResult = self.dokuwiki.set_locks({'lock':list(), 'unlock': [ entry.id ]})
+                    if not entry.id in lockResult['unlocked']:
+                        self.log.error( "Failed to UN-lock page {0}. lockResult was {1}".format(entry.id, lockResult) )
                         return -errno.EIO
                 except DokuWikiXMLRPCError,e2:
                     self.log.error(str(e2))
@@ -330,6 +343,6 @@ Try -d to see whats going on
 dokuFS = DokuFS(version="%prog " + fuse.__version__,
                 usage=DokuFS.usage)
 dokuFS.parse(values=dokuFS, errex=1)
-dokuFS.init2()
+dokuFS.connect()
 dokuFS.multithreaded = False
 dokuFS.main()
