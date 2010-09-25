@@ -1,8 +1,5 @@
 #!/usr/bin/env python
 
-# based on dokufucker.py see:
-# http://www.dokuwiki.org/tips:edit_dokuwiki_with_text_editors_using_fuse_and_python
-
 #while true; do sudo python dokuwikifs.py -f -o url="http://site/lib/exe/xmlrpc.php",username="foo",password="bla",allow_other testpath; sleep 1; done
 
 import os
@@ -220,7 +217,7 @@ Try -d to see whats going on
             self.write(path, "%truncated%", 0)
         else:
             entry = self._findPageTreeEntry(path)
-            if not entry or isinstance(entry, DokuPage):
+            if not entry or not isinstance(entry, DokuPage):
                 return -errno.ENOENT
 
             buf = self.dokuwiki.page(entry.id)[:length]
@@ -262,7 +259,8 @@ Try -d to see whats going on
     def read(self, path, length, offset):
         self.log.info( "read({0},{1},{2})".format(path, length, offset) )
         entry = self._findPageTreeEntry(path)
-        if not entry or isinstance(entry, DokuPage):
+        if not entry or not isinstance(entry, DokuPage):
+            self.log.error( "read({0},{1},{2}): No Such file or directory: {3}".format(path, length, offset, entry) )
             return -errno.ENOENT
 
         buf = self.dokuwiki.page(entry.id)
@@ -299,7 +297,7 @@ Try -d to see whats going on
     def write(self, path, buf, offset):
         self.log.info( "write({0}, len(buf)={1}, {2})".format(path, len(buf), offset) )
         entry = self._findPageTreeEntry(path)
-        if not entry or isinstance(entry, DokuPage):
+        if not entry or not isinstance(entry, DokuPage):
             return -errno.ENOENT
 
         # Lock page to prevent race-conditions
